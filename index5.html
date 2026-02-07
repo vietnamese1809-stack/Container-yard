@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>Container Yard PRO</title>
+
+<style>
+body{font-family:Arial;background:#f2f2f2;text-align:center;}
+
+#yard{
+display:grid;
+grid-template-columns:repeat(10,70px);
+gap:5px;
+justify-content:center;
+margin-top:20px;
+}
+
+.cell{
+width:70px;height:90px;background:white;border:2px solid #333;
+display:flex;flex-direction:column-reverse;padding:2px;cursor:pointer;
+}
+
+.container{
+height:18px;margin:1px 0;color:white;font-size:10px;
+display:flex;align-items:center;justify-content:center;border-radius:3px;
+cursor:pointer;
+border:2px solid transparent;
+}
+
+.red{background:#d9534f;}
+.green{background:#5cb85c;}
+.selected{outline:3px solid yellow;}
+
+.borderRed{border:2px solid #d9534f;}
+.borderGreen{border:2px solid #5cb85c;}
+
+.ageWhite{background:white;color:black;}
+.ageYellow{background:yellow;color:black;animation:blink 1s infinite;}
+.ageRed{background:red;animation:blink 0.6s infinite;}
+
+@keyframes blink{50%{opacity:0.3;}}
+
+.railLane{
+width:100%;height:45px;background:#888;margin-top:20px;
+display:flex;align-items:center;overflow-x:auto;cursor:pointer;
+}
+
+button{margin:3px;padding:6px 10px;}
+#stats{margin-top:10px;font-weight:bold;}
+</style>
+</head>
+
+<body>
+
+<h2>🚢 Container Yard Simulator</h2>
+
+<div id="stats"></div>
+
+<button onclick="setDisplayMode('status')">Tình trạng vỏ</button>
+<button onclick="setDisplayMode('aging')">Theo ngày hạn</button>
+
+<div class="railLane" id="rail0"></div>
+<div class="railLane" id="rail1"></div>
+
+<div id="yard"></div>
+
+<br>
+
+Ray 1:
+<input id="code0">
+<input type="date" id="date0">
+<button onclick="spawn(0,'red')">Nặng</button>
+<button onclick="spawn(0,'green')">Rỗng</button>
+<button onclick="exportRail(0)">Xuất</button>
+
+<br><br>
+
+Ray 2:
+<input id="code1">
+<input type="date" id="date1">
+<button onclick="spawn(1,'red')">Nặng</button>
+<button onclick="spawn(1,'green')">Rỗng</button>
+<button onclick="exportRail(1)">Xuất</button>
+
+<br>
+<button onclick="manualSave()">💾 SAVE</button>
+<button onclick="undo()">↩ Undo</button>
+
+<script>
+
+/* ===== GLOBAL ===== */
+const yardDOM=document.getElementById("yard");
+const railDOM=[document.getElementById("rail0"),document.getElementById("rail1")];
+
+const cells=[];
+const rails=[[],[]];
+let selected=[];
+let history=[];
+let displayMode="status";
+let isDirty=false;
+
+/* ===== DIRTY FLAG ===== */
+function markDirty(){ isDirty=true; }
+
+window.addEventListener("beforeunload",function(e){
+if(isDirty){
+e.preventDefault();
+e.returnValue="Bạn chưa SAVE dữ liệu!";
+}
+});
+
+/* ===== DATE ===== */
+function getDays(date){
+if(!date) return 0;
+return Math.floor((new Date()-new Date(date))/(1000*60*60*24));
+}
+
+/* ===== DISPLAY ===== */
+function updateDisplay(div){
+
+let code=div.dataset.code;
+let color=div.dataset.color;
+let days=getDays(div.dataset.date);
+
+div.className="container";
+
+if(displayMode==="status"){
+div.classList.add(color);
+div.innerText=code;
+return;
+}
+
+if(days<20) div.classList.add("ageWhite");
+else if(days<40) div.classList.add("ageYellow");
+else div.classList.add("ageRed");
+
+if(color==="red") div.classList.add("borderRed");
+else div.classList.add("borderGreen");
+
+div.innerText=code+" "+days+"d";
+}
+
+function updateAllDisplay(){
+document.querySelectorAll(".container").forEach(updateDisplay);
+}
+
+function setDisplayMode(mode){
+displayMode=mode;
+updateAllDisplay();
+}
+
+/* ===== HISTORY ===== */
+function saveHistory(){
+history.push(JSON.stringify({
+cells:serializeCells(),
+rails:serializeRails()
+}));
+if(history.length>20) history.shift();
+markDirty();
+}
+
+function undo(){
+if(history.length<2) return;
+history.pop();
+loadSerialized(JSON.parse(history.at(-1)));
+markDirty();
+}
+
+/* ===== SERIALIZE ===== */
+function serializeCells(){
+return cells.map(c=>c.map(x=>({
+code:x.dataset.code,
+color:x.dataset.color,
+date:x.dataset.date
+})));
+}
+
+function serializeRails(){
+return rails.map(r=>r.map(x=>({
+code:x.dataset.code,
+color:x.dataset.color,
+date:x.dataset.date
+})));
+}
+
+function loadSerialized(data){
+cells.forEach((c,i)=>{
+cells[i]=data.cells[i].map(x=>createCont(x.code,x.color,x.date));
+renderCell(i);
+});
+
+rails.forEach((r,i)=>{
+rails[i]=data.rails[i].map(x=>createCont(x.code,x.color,x.date));
+renderRail(i);
+});
+
+autoSave();
+updateStats();
+updateAllDisplay();
+}
+
+/* ===== SAVE ===== */
+function autoSave(){
+localStorage.setItem("yardAuto",JSON.stringify({
+cells:serializeCells(),
+rails:serializeRails()
+}));
+}
+
+function manualSave(){
+localStorage.setItem("yardManual",JSON.stringify({
+cells:serializeCells(),
+rails:serializeRails()
+}));
+isDirty=false;
+alert("Đã SAVE snapshot!");
+}
+
+/* ===== CREATE CONTAINER ===== */
+function createCont(code,color,date){
+
+let div=document.createElement("div");
+div.dataset.code=code;
+div.dataset.color=color;
+div.dataset.date=date || new Date().toISOString();
+div.className="container";
+
+div.onclick=e=>{
+e.stopPropagation();
+toggleSelect(div);
+};
+
+div.ondblclick=e=>{
+e.stopPropagation();
+saveHistory();
+
+div.dataset.color=(div.dataset.color==="red")?"green":"red";
+
+updateDisplay(div);
+autoSave();
+updateStats();
+markDirty();
+};
+
+updateDisplay(div);
+return div;
+}
+
+/* ===== SELECT ===== */
+function toggleSelect(cont){
+if(selected.includes(cont)){
+cont.classList.remove("selected");
+selected=selected.filter(c=>c!==cont);
+}else{
+cont.classList.add("selected");
+selected.push(cont);
+}
+}
+
+/* ===== RENDER ===== */
+function renderCell(i){
+let cell=yardDOM.children[i];
+cell.innerHTML="";
+cells[i].forEach(c=>cell.appendChild(c));
+}
+
+function renderRail(i){
+railDOM[i].innerHTML="";
+rails[i].forEach(c=>railDOM[i].appendChild(c));
+}
+
+/* ===== CRANE ===== */
+function craneMove(cont,callback){
+
+let rect=cont.getBoundingClientRect();
+
+let clone=cont.cloneNode(true);
+clone.style.position="absolute";
+clone.style.left=rect.left+"px";
+clone.style.top=rect.top+"px";
+document.body.appendChild(clone);
+
+clone.style.transition="top 0.3s";
+clone.style.top=(rect.top-60)+"px";
+
+setTimeout(()=>{clone.style.top=rect.top+"px";},300);
+
+setTimeout(()=>{
+clone.remove();
+callback();
+updateAllDisplay();
+},600);
+}
+
+/* ===== REMOVE ===== */
+function removeFromSource(cont){
+
+let parent=cont.parentElement;
+
+if(parent.classList.contains("cell")){
+let idx=[...yardDOM.children].indexOf(parent);
+if(cells[idx].at(-1)!==cont) return false;
+cells[idx].pop();
+renderCell(idx);
+return true;
+}
+
+for(let i=0;i<2;i++){
+let r=rails[i].indexOf(cont);
+if(r>-1){
+rails[i].splice(r,1);
+renderRail(i);
+return true;
+}
+}
+return false;
+}
+
+/* ===== MOVE ===== */
+function moveToCell(target){
+
+saveHistory();
+
+selected.forEach(cont=>{
+if(cells[target].length>=4) return;
+
+if(removeFromSource(cont)){
+craneMove(cont,()=>{
+cells[target].push(cont);
+renderCell(target);
+autoSave();
+updateStats();
+markDirty();
+});
+cont.classList.remove("selected");
+}
+});
+
+selected=[];
+}
+
+railDOM.forEach((rail,index)=>{
+
+rail.onclick=()=>{
+saveHistory();
+
+selected.forEach(cont=>{
+if(removeFromSource(cont)){
+craneMove(cont,()=>{
+rails[index].push(cont);
+renderRail(index);
+autoSave();
+updateStats();
+markDirty();
+});
+cont.classList.remove("selected");
+}
+});
+
+selected=[];
+};
+
+});
+
+/* ===== SPAWN ===== */
+function spawn(index,color){
+
+saveHistory();
+
+let code=document.getElementById("code"+index).value;
+let date=document.getElementById("date"+index).value;
+
+if(!code) return;
+
+rails[index].push(createCont(code,color,date));
+renderRail(index);
+
+autoSave();
+updateStats();
+markDirty();
+}
+
+/* ===== EXPORT ===== */
+function exportRail(index){
+
+saveHistory();
+
+rails[index].forEach((cont,i)=>animateTrainExit(cont,i));
+
+rails[index]=[];
+renderRail(index);
+
+autoSave();
+updateStats();
+markDirty();
+}
+
+/* ===== TRAIN ===== */
+function animateTrainExit(cont,order){
+
+let rect=cont.getBoundingClientRect();
+
+let clone=cont.cloneNode(true);
+clone.style.position="absolute";
+clone.style.left=rect.left+"px";
+clone.style.top=rect.top+"px";
+
+document.body.appendChild(clone);
+
+let delay=order*150;
+
+setTimeout(()=>{
+clone.style.transition="left 1.2s linear";
+clone.style.left=window.innerWidth+"px";
+},delay);
+
+setTimeout(()=>clone.remove(),delay+1200);
+}
+
+/* ===== STATS ===== */
+function updateStats(){
+
+let heavy=0,empty=0,yardCount=0,railCount=0;
+
+cells.forEach(c=>{
+yardCount+=c.length;
+c.forEach(x=>x.dataset.color==="red"?heavy++:empty++);
+});
+
+rails.forEach(r=>{
+railCount+=r.length;
+r.forEach(x=>x.dataset.color==="red"?heavy++:empty++);
+});
+
+document.getElementById("stats").innerText=
+`Tổng:${heavy+empty} | Nặng:${heavy} | Rỗng:${empty} | Bãi:${yardCount} | Ray:${railCount}`;
+}
+
+/* ===== INIT ===== */
+for(let i=0;i<50;i++){
+let cell=document.createElement("div");
+cell.className="cell";
+cell.onclick=()=>moveToCell(i);
+yardDOM.appendChild(cell);
+cells.push([]);
+}
+
+function init(){
+
+let saved=localStorage.getItem("yardManual");
+if(saved){
+loadSerialized(JSON.parse(saved));
+isDirty=false;
+return;
+}
+
+let used=[...Array(50).keys()]
+.sort(()=>0.5-Math.random())
+.slice(0,25);
+
+let id=1;
+
+used.forEach(i=>{
+for(let j=0;j<4;j++){
+let color=Math.random()>0.5?"red":"green";
+cells[i].push(createCont("C"+String(id++).padStart(3,"0"),color,new Date().toISOString()));
+}
+renderCell(i);
+});
+
+saveHistory();
+updateStats();
+}
+
+init();
+
+/* realtime aging */
+setInterval(updateAllDisplay,60000);
+
+</script>
+</body>
+</html>
